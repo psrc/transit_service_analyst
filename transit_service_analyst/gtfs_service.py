@@ -4,6 +4,7 @@ from numpy import NaN
 from datetime import datetime
 import geopandas as gpd
 from shapely.geometry import LineString
+from .gtfs_schema import GTFS_Schema
 
 
 class Service_Utils(object):
@@ -18,30 +19,26 @@ class Service_Utils(object):
         """
         Add docstring.
         """
-        self.dir = gtfs_dir
+        self.gtfs_dir = gtfs_dir
         self.service_date = service_date
         self.int_service_date = int(service_date)
         self.start_time = start_time
         self.end_time = end_time
         self._crs_epsg = 4326
 
-        if os.path.exists(os.path.join(
-                self.dir, 'calendar_dates.txt')) is False:
-            self.calendar_dates = pd.DataFrame(
-                    columns=['service_id', 'date', 'exception_type'])
-        else:
-            self.calendar_dates = pd.read_csv(
-                os.path.join(self.dir, 'calendar_dates.txt'))
-
-        self.calendar = pd.read_csv(os.path.join(gtfs_dir, 'calendar.txt'))
+        # gtfs properties:
+        self.calendar_dates = self.__get_calendar_dates()
+        self.calendar = self.__get_calendar()
         self.service_ids = self.__get_service_ids()
-        self.get_dir = gtfs_dir
         self.trips = self.__get_trips()
-        self.routes = self.__get_routes()
         self.stop_times = self.__get_stop_times()
+        # self._df_all_stops_by_trips = self.__get_trips_stop_times()
+        self.routes = self.__get_routes()
         self.stop_list = self.stop_times['stop_id'].unique()
         self.stops = self.__get_stops()
         self.shapes = self.__get_shapes()
+
+        # derived DataFrames
         self._df_all_stops_by_trips = self.__get_trips_stop_times()
         self._schedule_pattern_dict = self.__get_schedule_pattern()
         self.schedule_pattern_df = self.__get_schedule_pattern_df()
@@ -53,26 +50,46 @@ class Service_Utils(object):
         self.__rep_trip_list = list(
             self.schedule_pattern_df.rep_trip_id.unique())
 
+    def __get_calendar(self):
+        calendar_df = pd.read_csv(os.path.join(self.gtfs_dir, 'calendar.txt'))
+        return GTFS_Schema.Calendar.validate(calendar_df)
+
+    def __get_calendar_dates(self):
+        if os.path.exists(os.path.join(
+                self.gtfs_dir, 'calendar_dates.txt')) is False:
+            calendar_dates = pd.DataFrame(
+                    columns=GTFS_Schema.calendar_dates_columns)
+        else:
+            calendar_dates = pd.read_csv(
+                os.path.join(self.gtfs_dir, 'calendar_dates.txt'))
+
+        return GTFS_Schema.Calendar_Dates.validate(calendar_dates)
+
     def __get_trips(self):
-        trips_df = pd.read_csv(os.path.join(self.get_dir, 'trips.txt'))
+        trips_df = pd.read_csv(os.path.join(self.gtfs_dir, 'trips.txt'))
+        trips_df = GTFS_Schema.Trips.validate(trips_df)
         trips_df = trips_df[trips_df['service_id'].isin(self.service_ids)]
+
         return trips_df
 
-    def __get_routes(self):
-        routes_df = pd.read_csv(os.path.join(self.get_dir, 'routes.txt'))
+    def __get_routes(self) -> pd.DataFrame:
+        routes_df = pd.read_csv(os.path.join(self.gtfs_dir, 'routes.txt'))
+        routes_df = GTFS_Schema.Routes.validate(routes_df)
         routes_df = routes_df[routes_df['route_id'].isin(
             self.trips['route_id'])]
         return routes_df
 
     def __get_stop_times(self):
         stop_times_df = pd.read_csv(os.path.join(
-            self.get_dir, 'stop_times.txt'))
+            self.gtfs_dir, 'stop_times.txt'))
+        stop_times_df = GTFS_Schema.Stop_Times.validate(stop_times_df)
         stop_times_df = stop_times_df[stop_times_df['trip_id'].isin(
             self.trips['trip_id'])]
         return stop_times_df
 
     def __get_stops(self):
-        stops_gdf = pd.read_csv(os.path.join(self.get_dir, 'stops.txt'))
+        stops_gdf = pd.read_csv(os.path.join(self.gtfs_dir, 'stops.txt'))
+        stops_gdf = GTFS_Schema.Stops.validate(stops_gdf)
         stops_gdf = stops_gdf[stops_gdf['stop_id'].isin(self.stop_list)]
         stops_gdf = gpd.GeoDataFrame(stops_gdf, geometry=gpd.points_from_xy(
             stops_gdf['stop_lon'], stops_gdf['stop_lat']))
@@ -80,7 +97,9 @@ class Service_Utils(object):
         return stops_gdf
 
     def __get_shapes(self):
-        gdf = pd.read_csv(os.path.join(self.get_dir, 'shapes.txt'))
+        gdf = pd.read_csv(os.path.join(self.gtfs_dir, 'shapes.txt'), dtype={
+            'shape_id': str})
+        gdf = GTFS_Schema.Shapes.validate(gdf)
         gdf = gdf[gdf['shape_id'].isin(self.trips['shape_id'])]
         gdf = gpd.GeoDataFrame(gdf, geometry=gpd.points_from_xy(
             gdf['shape_pt_lon'], gdf['shape_pt_lat']))
@@ -117,7 +136,6 @@ class Service_Utils(object):
             add_service + regular_service_dates) if x not in remove_service]
 
         assert service_id_list, "No service found in feed."
-
         return service_id_list
 
     def __get_weekday(self, my_date):
@@ -155,58 +173,6 @@ class Service_Utils(object):
         trips = list(set(trips))
         return trips
 
-    def __get_trips_stop_times_hold(self):
-
-        """
-        Creates a merged dataframe consisting of trips & stop_ids for the
-        start time, end time and service_id (from GTFS Calender.txt). This
-        can include partial itineraries as only stops within the start and
-        end time are included.
-        """
-        stop_times_df = self.ptg_feed.stop_times
-        stop_times_df = self.__make_sequence_col(
-            stop_times_df, ['trip_id', 'stop_sequence'], 'trip_id',
-            'stop_sequence')
-
-        # Add columns for arrival/departure in decimal minutes and hours:
-        # Some schedules only have arrival/departure times for time points,
-        # not all stops:
-
-        if stop_times_df['departure_time'].isnull().any():
-            stop_times_df['departure_time'].interpolate(inplace=True)
-            stop_times_df['departure_time_mins'] = stop_times_df[
-                'departure_time']/60
-        else:
-            stop_times_df['departure_time_mins'] = stop_times_df[
-                'departure_time']/60
-
-        stop_times_df['departure_time_hrs'] = stop_times_df[
-            'departure_time_mins']/60
-        stop_times_df['departure_time_hrs'] = stop_times_df[
-            'departure_time_hrs'].astype(int)
-
-        # Get all trips for this time window
-        trips_tw_df = stop_times_df.loc[(
-            stop_times_df.departure_time_mins >= self.start_time) & (
-                stop_times_df.departure_time_mins < self.end_time)]
-        # Only need the trip_id column
-        trips_tw_df = pd.DataFrame(trips_tw_df.trip_id)
-        trips_tw_df = trips_tw_df.drop_duplicates('trip_id')
-
-        # Merge trips on trip_id, so we can have shape_id. Use inner so we get
-        # trips for time window and service_id
-        trips_tw_df = trips_tw_df.merge(
-            self.ptg_feed.trips, 'inner', left_on=["trip_id"], right_on=[
-                "trip_id"])
-
-        # Get all the stops for the trips that operate in this window,
-        # even if some of the stops occur outside the window
-        trips_stop_times_df = stop_times_df.merge(
-            trips_tw_df, 'right', left_on=["trip_id"], right_on=["trip_id"])
-        trips_stop_times_df = trips_stop_times_df.sort_values(
-            ['trip_id', 'stop_sequence'])
-        return trips_stop_times_df
-
     def __get_trips_stop_times(self):
         """
         Creates a merged dataframe consisting of trips & stop_ids for the
@@ -240,26 +206,26 @@ class Service_Utils(object):
         stop_times_df['departure_time_hrs'] = stop_times_df[
             'departure_time_hrs'].astype(int)
         # Get all trips for this time window
-        trips_tw_df = stop_times_df.loc[(
-            stop_times_df.departure_time_mins >= self.start_time) & (
-                stop_times_df.departure_time_mins < self.end_time)]
+        # trips_tw_df = stop_times_df.loc[(
+        #     stop_times_df.departure_time_mins >= self.start_time) & (
+        #         stop_times_df.departure_time_mins < self.end_time)]
         # Only need the trip_id column
-        trips_tw_df = pd.DataFrame(trips_tw_df.trip_id)
-        trips_tw_df = trips_tw_df.drop_duplicates('trip_id')
+        # trips_tw_df = pd.DataFrame(trips_tw_df.trip_id)
+        # trips_tw_df = trips_tw_df.drop_duplicates('trip_id')
 
         # Merge trips on trip_id, so we can have shape_id. Use inner so we get
         # trips for time window and service_id
-        trips_tw_df = trips_tw_df.merge(
-            self.trips, 'inner', left_on=["trip_id"], right_on=["trip_id"])
+        stop_times_df = stop_times_df.merge(
+            self.trips, 'left', left_on=["trip_id"], right_on=["trip_id"])
 
         # Get all the stops for the trips that operate in this window, even if
         # some of the stops occur outside the window
-        trips_stop_times_df = stop_times_df.merge(
-            trips_tw_df, 'right', left_on=["trip_id"],
-            right_on=["trip_id"])
-        trips_stop_times_df = trips_stop_times_df.sort_values(
-            ['trip_id', 'stop_sequence'])
-        return trips_stop_times_df
+        # trips_stop_times_df = stop_times_df.merge(
+        #     trips_tw_df, 'right', left_on=["trip_id"],
+        #     right_on=["trip_id"])
+        # trips_stop_times_df = trips_stop_times_df.sort_values(
+        #     ['trip_id', 'stop_sequence'])
+        return stop_times_df
 
     def __convert_to_decimal_minutes(self, row, field):
         """
@@ -344,8 +310,6 @@ class Service_Utils(object):
         df2 = df2.rename(
             columns={'trip_id1': 'rep_trip_id', 'trip_id': 'orig_trip_id'})
         df2 = df2.drop('trip_id2', 1)
-        #df2 = df2.merge(self.trips[['trip_id', 'direction_id']], how = 'left', left_on='rep_trip_id', right_on = 'trip_id')
-        #df2 = df2[['rep_trip_id','orig_trip_id', 'route_id', 'shape_id', 'direction_id']]
         return df2
 
     def get_tph_by_line(self):
@@ -372,8 +336,10 @@ class Service_Utils(object):
             if not col == 'rep_trip_id':
                 t = t.rename(columns={col: 'hour_' + str(col)})
         t.reset_index(inplace=True)
-        t = t.merge(self.trips[['route_id', 'trip_id', 'direction_id']], how = 'left', left_on='rep_trip_id', right_on = 'trip_id')
-        
+        t = t.merge(self.trips[['route_id', 'trip_id',
+                    'direction_id']], how='left', left_on='rep_trip_id',
+                    right_on='trip_id')
+
         return t
 
     def get_tph_at_stops(self):
@@ -399,6 +365,7 @@ class Service_Utils(object):
         rep_trips = rep_trips.merge(self.routes, how='left', on='route_id')
         rep_trips = self.shapes.merge(rep_trips, how='right', on='shape_id')
         rep_trips.rename(columns={'trip_id': 'rep_trip_id'}, inplace=True)
+        assert rep_trips.geometry.hasnans == False
         return rep_trips
 
     def get_line_stops_gdf(self):
@@ -414,7 +381,7 @@ class Service_Utils(object):
         route_stops = route_stops.set_crs(epsg=self._crs_epsg)
         return route_stops
 
-    def get_service_time_by_line(self):
+    def get_line_time(self):
         first = self._df_all_stops_by_trips.groupby(
             ['trip_id'])['departure_time_mins'].first()
         first.rename('first', inplace=True)
@@ -428,10 +395,15 @@ class Service_Utils(object):
 
         df = pd.concat([route_id, first, last], axis=1).reset_index()
         df['total_line_time'] = df['last'] - df['first']
+        return df
+
+    def get_service_hours_by_line(self):
+        df = self.get_line_time()
         df = df.groupby('rep_trip_id')['total_line_time'].sum().to_frame()
         df.reset_index(inplace=True)
-        df = df.merge(self.trips[['route_id', 'trip_id', 'direction_id']], how = 'left', left_on='rep_trip_id', right_on = 'trip_id')
-        
+        df = df.merge(self.trips[['route_id', 'trip_id', 'direction_id']],
+                      how='left', left_on='rep_trip_id', right_on='trip_id')
+
         return df
 
     def get_routes_by_stops(self):
@@ -446,8 +418,6 @@ class Service_Utils(object):
         df = self.schedule_pattern_df.groupby('rep_trip_id').count(
                  ).reset_index()[['rep_trip_id', 'orig_trip_id']]
         df = df.rename(columns={'orig_trip_id': 'total_trips'})
-        df = df.merge(self.trips, how='left', left_on='rep_trip_id', right_on = 'trip_id')
+        df = df.merge(self.trips, how='left', left_on='rep_trip_id',
+                      right_on='trip_id')
         return df[['rep_trip_id', 'route_id', 'direction_id', 'total_trips']]
-        
-
-  

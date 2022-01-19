@@ -1,6 +1,6 @@
 from .load_gtfs import (
     load_gtfs)
-
+from .gtfs_schema import (GTFS_Schema)
 __all__ = [
     'route_representation',
     'gtfs_dir',
@@ -16,4 +16,7 @@ __all__ = [
     'stop_list',
     'stops',
     'shapes',
+    'Calendar',
+    'Stop_Times'
+    'Trips'
 ]

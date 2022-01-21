@@ -5,7 +5,7 @@ from datetime import datetime
 import geopandas as gpd
 from shapely.geometry import LineString
 from .gtfs_schema import GTFS_Schema
-
+import time
 
 class Service_Utils(object):
     """
@@ -32,6 +32,10 @@ class Service_Utils(object):
         self.service_ids = self.__get_service_ids()
         self.trips = self.__get_trips()
         self.stop_times = self.__get_stop_times()
+        # deal with frequencies here:
+        if os.path.exists(os.path.join(self.gtfs_dir, 'frequencies.txt')):
+            self.trips, self.stop_times = self.frequencies_to_trips()
+
         # self._df_all_stops_by_trips = self.__get_trips_stop_times()
         self.routes = self.__get_routes()
         self.stop_list = self.stop_times['stop_id'].unique()
@@ -205,26 +209,9 @@ class Service_Utils(object):
             'departure_time_mins']/60
         stop_times_df['departure_time_hrs'] = stop_times_df[
             'departure_time_hrs'].astype(int)
-        # Get all trips for this time window
-        # trips_tw_df = stop_times_df.loc[(
-        #     stop_times_df.departure_time_mins >= self.start_time) & (
-        #         stop_times_df.departure_time_mins < self.end_time)]
-        # Only need the trip_id column
-        # trips_tw_df = pd.DataFrame(trips_tw_df.trip_id)
-        # trips_tw_df = trips_tw_df.drop_duplicates('trip_id')
-
-        # Merge trips on trip_id, so we can have shape_id. Use inner so we get
-        # trips for time window and service_id
         stop_times_df = stop_times_df.merge(
             self.trips, 'left', left_on=["trip_id"], right_on=["trip_id"])
 
-        # Get all the stops for the trips that operate in this window, even if
-        # some of the stops occur outside the window
-        # trips_stop_times_df = stop_times_df.merge(
-        #     trips_tw_df, 'right', left_on=["trip_id"],
-        #     right_on=["trip_id"])
-        # trips_stop_times_df = trips_stop_times_df.sort_values(
-        #     ['trip_id', 'stop_sequence'])
         return stop_times_df
 
     def __convert_to_decimal_minutes(self, row, field):
@@ -242,6 +229,12 @@ class Service_Utils(object):
         h, m, s = row[field].split(':')
         return int(h) * 3600 + int(m) * 60 + int(s)
 
+    def __to_hhmmss(self, row, field):
+        """
+        Converts to hhmmss format.
+        """
+        return time.strftime('%H:%M:%S', time.gmtime(row[field]))
+
     def __get_schedule_pattern(self, route_field='route_id'):
         """
         Returns a nested diciontary where the first level key is route_id and
@@ -254,13 +247,6 @@ class Service_Utils(object):
         [list of stops]}}
 
         """
-
-        # Create a dictionary where the key is a tuple of trip_id, route_id and
-        # the value is a list of stop sequences for the trip Need to use all
-        # the stops for the trips within the time window, even if those stops
-        # fall outside the time winwdow because we are interested in unique
-        # stop sequences
-
         stop_sequence_dict = {k: list(v) for k, v in
                               self._df_all_stops_by_trips.groupby(
                 ['trip_id', route_field])['stop_id']}
@@ -311,6 +297,108 @@ class Service_Utils(object):
             columns={'trip_id1': 'rep_trip_id', 'trip_id': 'orig_trip_id'})
         df2 = df2.drop('trip_id2', 1)
         return df2
+
+    def frequencies_to_trips(self):
+        """
+        For each trip_id in frequencies.txt, calculates the number
+        of trips and creates records for each trip in trips.txt and 
+        stop_times.txt. Deletes the original represetative trip_id
+        in both of these files. 
+        """
+        frequencies = pd.read_csv(
+            os.path.join(self.gtfs_dir, 'frequencies.txt'))
+        frequencies = frequencies[frequencies['trip_id'].isin(
+            self.trips['trip_id'])]
+
+        # some feeds will use the same trip_id for multiple rows
+        # need to create a unique id for each row
+        frequencies['frequency_id'] = frequencies.index
+
+        frequencies['start_time_secs'] = frequencies.apply(
+            self.__convert_to_seconds, axis=1, args=('start_time',))
+
+        frequencies['end_time_secs'] = frequencies.apply(
+            self.__convert_to_seconds, axis=1, args=('end_time',))
+
+        # following assumes that the total number of trips
+        # does not include a final one that leaves the first
+        # stop at end_time in frequencies. This is supposed
+        # to be handeled by the exact_times field, but it seems
+        # some feeds dont use this, but probably should. Does not
+        # make sense to have the same departure time twice for the
+        # same route...
+
+        frequencies['total_trips'] = ((
+            (frequencies['end_time_secs']-frequencies[
+                'start_time_secs']) / frequencies[
+                    'headway_secs']) + 1).astype(int)
+
+        trips_update = self.trips.merge(frequencies, on='trip_id')
+        trips_update = trips_update.loc[trips_update.index.repeat(
+            trips_update['total_trips'])].reset_index(drop=True)
+        trips_update['counter'] = trips_update.groupby(
+            'trip_id').cumcount() + 1
+        trips_update['trip_id'] = trips_update['trip_id'].astype(
+            str) + '_' + trips_update['counter'].astype(str)
+
+        stop_times_update = frequencies.merge(
+            self.stop_times, on='trip_id', how='left')
+
+        stop_times_update['arrival_time_secs'] = stop_times_update.apply(
+            self.__convert_to_seconds, axis=1, args=('arrival_time',))
+        stop_times_update['departure_time_secs'] = stop_times_update.apply(
+            self.__convert_to_seconds, axis=1, args=('departure_time',))
+
+        stop_times_update['elapsed_time'] = stop_times_update.groupby(
+            ['trip_id', 'start_time'])['arrival_time_secs'].transform('first')
+        stop_times_update['elapsed_time'] = stop_times_update[
+            'arrival_time_secs'] - stop_times_update['elapsed_time']
+        stop_times_update['arrival_time_secs'] = stop_times_update[
+            'start_time_secs'] + stop_times_update['elapsed_time']
+
+        # for now assume departure time is the same as arrival time.
+        stop_times_update['departure_time_secs'] = stop_times_update[
+            'start_time_secs'] + stop_times_update['elapsed_time']
+
+        stop_times_update = stop_times_update.loc[
+            stop_times_update.index.repeat(
+                stop_times_update['total_trips'])].reset_index(drop=True)
+        # handles cae of repeated trip_ids
+        stop_times_update['counter'] = stop_times_update.groupby(
+            ['frequency_id', 'stop_id']).cumcount()
+        stop_times_update['departure_time_secs'] = stop_times_update[
+            'departure_time_secs'] + (stop_times_update[
+                'counter'] * stop_times_update['headway_secs'])
+        stop_times_update['arrival_time_secs'] = stop_times_update[
+            'arrival_time_secs'] + (stop_times_update[
+                'counter'] * stop_times_update['headway_secs'])
+
+        # now we want to get the cumcount based on trip_id
+        stop_times_update['counter'] = stop_times_update.groupby(
+            ['trip_id', 'stop_id']).cumcount() + 1
+        stop_times_update['departure_time'] = stop_times_update.apply(
+            self.__to_hhmmss, axis=1, args=('departure_time_secs',))
+        stop_times_update['arrival_time'] = stop_times_update.apply(
+            self.__to_hhmmss, axis=1, args=('arrival_time_secs',))
+        stop_times_update['trip_id'] = stop_times_update[
+            'trip_id'].astype(str) + '_' + stop_times_update[
+                'counter'].astype(str)
+
+        # remove trip_ids that are in frequencies
+        stop_times = self.stop_times[~self.stop_times['trip_id'].isin(
+            frequencies['trip_id'])]
+
+        trips = self.trips[~self.trips['trip_id'].isin(frequencies['trip_id'])]
+
+        # get rid of some columns
+        stop_times_update = stop_times_update[stop_times.columns]
+        trips_update = trips_update[trips.columns]
+
+        # add new trips/stop times
+        trips = pd.concat([trips, trips_update])
+        stop_times = pd.concat([stop_times, stop_times_update])
+
+        return trips, stop_times
 
     def get_tph_by_line(self):
         # get the first stop for every trip
@@ -404,7 +492,7 @@ class Service_Utils(object):
         df = df.merge(self.trips[['route_id', 'trip_id', 'direction_id']],
                       how='left', left_on='rep_trip_id', right_on='trip_id')
 
-        return df
+        return df[['rep_trip_id', 'total_line_time', 'route_id', 'direction_id']]
 
     def get_routes_by_stops(self):
         df = self._df_all_stops_by_trips[self._df_all_stops_by_trips[

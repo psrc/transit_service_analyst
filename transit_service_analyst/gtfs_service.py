@@ -320,18 +320,21 @@ class Service_Utils(object):
         frequencies['end_time_secs'] = frequencies.apply(
             self.__convert_to_seconds, axis=1, args=('end_time',))
 
-        # following assumes that the total number of trips
+        # following is coded so the total number of trips
         # does not include a final one that leaves the first
-        # stop at end_time in frequencies. This is supposed
-        # to be handeled by the exact_times field, but it seems
-        # some feeds dont use this, but probably should. Does not
-        # make sense to have the same departure time twice for the
-        # same route...
+        # stop at end_time in frequencies. I think this is the
+        # correct interpredtation of the field description:
+        # 'Time at which service changes to a different headway 
+        # (or ceases) at the first stop in the trip.'
+
+        # Rounding total trips to make sure all trips are counted 
+        # when end time is in the following format: 14:59:59, 
+        # instead of 15:00:00.
 
         frequencies['total_trips'] = ((
             (frequencies['end_time_secs']-frequencies[
                 'start_time_secs']) / frequencies[
-                    'headway_secs']) + 1).astype(int)
+                    'headway_secs'])).round(0).astype(int)
 
         trips_update = self.trips.merge(frequencies, on='trip_id')
         trips_update = trips_update.loc[trips_update.index.repeat(

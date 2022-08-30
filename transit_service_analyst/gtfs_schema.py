@@ -4,7 +4,6 @@ import pandera as pa
 
 
 class GTFS_Schema(object):
-
     class Agency(pa.SchemaModel):
         agency_name: Series[str] = pa.Field(coerce=True)
         agency_url: Series[str] = pa.Field(coerce=True)
@@ -17,14 +16,13 @@ class GTFS_Schema(object):
 
     class Routes(pa.SchemaModel):
         route_id: Series[str] = pa.Field(coerce=True)
-        route_type: Series[int] = pa.Field(
-            isin=[0, 1, 2, 3, 4, 5, 6, 7, 11, 12])
+        route_type: Series[int] = pa.Field(isin=[0, 1, 2, 3, 4, 5, 6, 7, 11, 12])
 
     class Trips(pa.SchemaModel):
         route_id: Series[str] = pa.Field(coerce=True)
         service_id: Series[str] = pa.Field(coerce=True)
         trip_id: Series[str] = pa.Field(coerce=True)
-        shape_id: Series[str] = pa.Field(coerce=True)
+        shape_id: Series[str] = pa.Field(coerce=True, nullable=True)
 
     class Stop_Times(pa.SchemaModel):
         trip_id: Series[str] = pa.Field(coerce=True)

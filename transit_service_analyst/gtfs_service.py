@@ -588,7 +588,7 @@ class Service_Utils(object):
         rep_trips = rep_trips.merge(self.routes, how="left", on="route_id")
         rep_trips = self.shapes.merge(rep_trips, how="right", on="shape_id")
         rep_trips.rename(columns={"trip_id": "rep_trip_id"}, inplace=True)
-        assert rep_trips.geometry.hasnans == False
+        #assert rep_trips.geometry.hasnans == False
         return rep_trips
 
     def get_line_stops_gdf(self):

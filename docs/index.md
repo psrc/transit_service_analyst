@@ -1,2 +1,2 @@
 transit_service_analyst examples:
-- [frequent stops](https://stefancoe.github.io/pages_test/index.html)
+- [frequent stops](https://psrc.github.io/get_frequent_stops.html)

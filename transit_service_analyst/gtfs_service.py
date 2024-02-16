@@ -1,4 +1,3 @@
-import os
 import pandas as pd
 from numpy import NaN
 from datetime import datetime
@@ -31,8 +30,9 @@ class Service_Utils(object):
         self.service_ids = self.__get_service_ids()
         self.trips = self.__get_trips()
         self.stop_times = self.__get_stop_times()
+
         # deal with frequencies here:
-        if os.path.exists(os.path.join(self.gtfs_dir, "frequencies.txt")):
+        if Path(f"{self.gtfs_dir}/frequencies.txt").is_file():
             self.trips, self.stop_times = self.frequencies_to_trips()
 
         # self._df_all_stops_by_trips = self.__get_trips_stop_times()
@@ -72,19 +72,17 @@ class Service_Utils(object):
         """
         Returns calendar.txt as a DataFrame.
         """
-        calendar_df = pd.read_csv(os.path.join(self.gtfs_dir, "calendar.txt"))
+        calendar_df = pd.read_csv(Path(f"{self.gtfs_dir}/calendar.txt"))
         return GTFS_Schema.Calendar.validate(calendar_df)
 
     def __get_calendar_dates(self):
         """
         Returns calendar_dates.txt as a DataFrame.
         """
-        if os.path.exists(os.path.join(self.gtfs_dir, "calendar_dates.txt")) is False:
-            calendar_dates = pd.DataFrame(columns=GTFS_Schema.calendar_dates_columns)
+        if Path(f"{self.gtfs_dir}/calendar_dates.txt").is_file():
+            calendar_dates = pd.read_csv(Path(f"{self.gtfs_dir}/calendar_dates.txt"))
         else:
-            calendar_dates = pd.read_csv(
-                os.path.join(self.gtfs_dir, "calendar_dates.txt")
-            )
+            calendar_dates = pd.DataFrame(columns=GTFS_Schema.calendar_dates_columns)
 
         return GTFS_Schema.Calendar_Dates.validate(calendar_dates)
 
@@ -93,7 +91,7 @@ class Service_Utils(object):
         Gets records in trips.txt for the service_ids that represent
         the service_date passed into the constructor. Returns a DataFrame.
         """
-        trips_df = pd.read_csv(os.path.join(self.gtfs_dir, "trips.txt"))
+        trips_df = pd.read_csv(Path(f"{self.gtfs_dir}/trips.txt"))
         trips_df = GTFS_Schema.Trips.validate(trips_df)
         trips_df = trips_df[trips_df["service_id"].isin(self.service_ids)]
 
@@ -104,7 +102,7 @@ class Service_Utils(object):
         Gets records in routes.txt for the trips that represent the
         service_date passed into the constructor. Returns a DataFrame.
         """
-        routes_df = pd.read_csv(os.path.join(self.gtfs_dir, "routes.txt"))
+        routes_df = pd.read_csv(Path(f"{self.gtfs_dir}/routes.txt"))
         routes_df = GTFS_Schema.Routes.validate(routes_df)
         routes_df = routes_df[routes_df["route_id"].isin(self.trips["route_id"])]
         return routes_df
@@ -114,7 +112,7 @@ class Service_Utils(object):
         Gets records in stop_times.txt for the trips that represent
         the service_date passed into the constructor. Returns a DataFrame.
         """
-        stop_times_df = pd.read_csv(os.path.join(self.gtfs_dir, "stop_times.txt"))
+        stop_times_df = pd.read_csv(Path(f"{self.gtfs_dir}/stop_times.txt"))
         stop_times_df = GTFS_Schema.Stop_Times.validate(stop_times_df)
         stop_times_df = stop_times_df[
             stop_times_df["trip_id"].isin(self.trips["trip_id"])
@@ -126,7 +124,7 @@ class Service_Utils(object):
         Gets records in stops.txt for the stops used by trips represented in
         the service_date passed into the constructor. Returns a DataFrame.
         """
-        stops_gdf = pd.read_csv(os.path.join(self.gtfs_dir, "stops.txt"))
+        stops_gdf = pd.read_csv(Path(f"{self.gtfs_dir}/stops.txt"))
         stops_gdf = GTFS_Schema.Stops.validate(stops_gdf)
         stops_gdf = stops_gdf[stops_gdf["stop_id"].isin(self.stop_list)]
         stops_gdf = gpd.GeoDataFrame(
@@ -142,24 +140,29 @@ class Service_Utils(object):
         the service_date passed into the constructor. The sequence of points
         are converted to line geometry and returned as a GeoDataFrame.
         """
-        if not Path(f"{self.gtfs_dir}/shapes.txt").is_file():
-            gdf = gpd.GeoDataFrame(columns=GTFS_Schema.shapes_columns)
-            print("WARNING: shapes.txt is missing from this feed! functions...") 
-            print("that return GeodataFrames will have empty geometries!")
-        else:
+        if Path(f"{self.gtfs_dir}/shapes.txt").is_file():
             gdf = pd.read_csv(
-                os.path.join(self.gtfs_dir, "shapes.txt"), dtype={"shape_id": str}
-                )
+                Path(f"{self.gtfs_dir}/shapes.txt"), dtype={"shape_id": str}
+            )
             gdf = GTFS_Schema.Shapes.validate(gdf)
             gdf = gdf[gdf["shape_id"].isin(self.trips["shape_id"])]
             gdf = gpd.GeoDataFrame(
-                gdf, geometry=gpd.points_from_xy(gdf["shape_pt_lon"], gdf["shape_pt_lat"])
+                gdf,
+                geometry=gpd.points_from_xy(gdf["shape_pt_lon"], gdf["shape_pt_lat"]),
             )
             gdf = gpd.GeoDataFrame(
-                gdf.groupby("shape_id")["geometry"].apply(lambda x: LineString(x.tolist()))
+                gdf.groupby("shape_id")["geometry"].apply(
+                    lambda x: LineString(x.tolist())
+                )
             )
             gdf.reset_index(inplace=True)
             gdf = gdf.set_crs(epsg=self._crs_epsg)
+
+        else:
+            gdf = gpd.GeoDataFrame(columns=GTFS_Schema.shapes_columns)
+            print("WARNING: shapes.txt is missing from this feed! functions...")
+            print("that return GeodataFrames will have empty geometries!")
+
         return gdf
 
     def __get_service_ids(self):
@@ -215,7 +218,6 @@ class Service_Utils(object):
         return week_days[my_date.weekday()]
 
     def __make_sequence_col(self, data_frame, sort_list, group_by_col, seq_col):
-
         """
         Sorts a pandas dataframe using sort_list, then creates a column of
         sequential integers (1,2,3, etc.) for groups, using the group_by_col.
@@ -386,7 +388,7 @@ class Service_Utils(object):
         stop_times.txt. Deletes the original represetative trip_id
         in both of these files.
         """
-        frequencies = pd.read_csv(os.path.join(self.gtfs_dir, "frequencies.txt"))
+        frequencies = pd.read_csv(Path(f"{self.gtfs_dir}/frequencies.txt"))
         frequencies = frequencies[frequencies["trip_id"].isin(self.trips["trip_id"])]
 
         # some feeds will use the same trip_id for multiple rows
@@ -594,7 +596,7 @@ class Service_Utils(object):
         rep_trips = rep_trips.merge(self.routes, how="left", on="route_id")
         rep_trips = self.shapes.merge(rep_trips, how="right", on="shape_id")
         rep_trips.rename(columns={"trip_id": "rep_trip_id"}, inplace=True)
-        #assert rep_trips.geometry.hasnans == False
+        # assert rep_trips.geometry.hasnans == False
         return rep_trips
 
     def get_line_stops_gdf(self):

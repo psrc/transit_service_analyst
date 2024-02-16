@@ -6,6 +6,7 @@ import geopandas as gpd
 from shapely.geometry import LineString
 from .gtfs_schema import GTFS_Schema
 import time
+from pathlib import Path
 
 
 class Service_Utils(object):
@@ -141,19 +142,24 @@ class Service_Utils(object):
         the service_date passed into the constructor. The sequence of points
         are converted to line geometry and returned as a GeoDataFrame.
         """
-        gdf = pd.read_csv(
-            os.path.join(self.gtfs_dir, "shapes.txt"), dtype={"shape_id": str}
-        )
-        gdf = GTFS_Schema.Shapes.validate(gdf)
-        gdf = gdf[gdf["shape_id"].isin(self.trips["shape_id"])]
-        gdf = gpd.GeoDataFrame(
-            gdf, geometry=gpd.points_from_xy(gdf["shape_pt_lon"], gdf["shape_pt_lat"])
-        )
-        gdf = gpd.GeoDataFrame(
-            gdf.groupby("shape_id")["geometry"].apply(lambda x: LineString(x.tolist()))
-        )
-        gdf.reset_index(inplace=True)
-        gdf = gdf.set_crs(epsg=self._crs_epsg)
+        if not Path(f"{self.gtfs_dir}/shapes.txt").is_file():
+            gdf = gpd.GeoDataFrame(columns=GTFS_Schema.shapes_columns)
+            print("WARNING: shapes.txt is missing from this feed! functions...") 
+            print("that return GeodataFrames will have empty geometries!")
+        else:
+            gdf = pd.read_csv(
+                os.path.join(self.gtfs_dir, "shapes.txt"), dtype={"shape_id": str}
+                )
+            gdf = GTFS_Schema.Shapes.validate(gdf)
+            gdf = gdf[gdf["shape_id"].isin(self.trips["shape_id"])]
+            gdf = gpd.GeoDataFrame(
+                gdf, geometry=gpd.points_from_xy(gdf["shape_pt_lon"], gdf["shape_pt_lat"])
+            )
+            gdf = gpd.GeoDataFrame(
+                gdf.groupby("shape_id")["geometry"].apply(lambda x: LineString(x.tolist()))
+            )
+            gdf.reset_index(inplace=True)
+            gdf = gdf.set_crs(epsg=self._crs_epsg)
         return gdf
 
     def __get_service_ids(self):

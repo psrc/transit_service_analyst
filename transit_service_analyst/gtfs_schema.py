@@ -54,3 +54,4 @@ class GTFS_Schema(object):
 
     trips_columns = list(Trips.__annotations__.keys())
     calendar_dates_columns = list(Calendar_Dates.__annotations__.keys())
+    shapes_columns = list(Shapes.__annotations__.keys())

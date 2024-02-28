@@ -43,7 +43,7 @@ class GTFS_Schema(object):
 
     class Calendar_Dates(pa.SchemaModel):
         service_id: Series[str] = pa.Field(coerce=True)
-        date: Series[str] = pa.Field(coerce=True)
+        date: Series[int] = pa.Field(coerce=True)
         exception_type: Series[int] = pa.Field(coerce=True, isin=[1, 2])
 
     class Shapes(pa.SchemaModel):

@@ -1,11 +1,13 @@
+import time
+from datetime import datetime
+from pathlib import Path
+
+import geopandas as gpd
 import pandas as pd
 from numpy import NaN
-from datetime import datetime
-import geopandas as gpd
 from shapely.geometry import LineString
+
 from .gtfs_schema import GTFS_Schema
-import time
-from pathlib import Path
 
 
 class Service_Utils(object):

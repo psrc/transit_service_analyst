@@ -4,6 +4,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+
 try:
     from numpy import NaN
 except:
@@ -421,10 +422,8 @@ class Service_Utils(object):
 
         frequencies["total_trips"] = (
             (
-                (
-                    (frequencies["end_time_secs"] - frequencies["start_time_secs"])
-                    / frequencies["headway_secs"]
-                )
+                (frequencies["end_time_secs"] - frequencies["start_time_secs"])
+                / frequencies["headway_secs"]
             )
             .round(0)
             .astype(int)

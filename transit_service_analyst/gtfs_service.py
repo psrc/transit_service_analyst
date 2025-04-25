@@ -4,7 +4,10 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
-from numpy import NaN
+try:
+    from numpy import NaN
+except:
+    from numpy import nan
 from shapely.geometry import LineString
 
 from .gtfs_schema import GTFS_Schema

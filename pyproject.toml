@@ -1,0 +1,22 @@
+[project]
+name = "transit-service-analyst"
+version = "0.1.5"
+description = "Tools to support transit service analysis."
+authors = [
+    {name = "stefancoe", email = "coestefan@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "geopandas (>=1.0.1)",
+    "numpy",
+    "pandas",
+    "pandera",
+    "pyyaml"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
